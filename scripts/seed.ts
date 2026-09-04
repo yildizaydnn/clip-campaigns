@@ -136,13 +136,11 @@ async function main() {
   const approved = subs[4];
   if (!approved) throw new Error("expected the seeded approved submission");
 
-  // Two ready-made demo campaigns so the budget ceiling and auto-completion
-  // can be shown deterministically (no dependence on random view growth):
+  // Two ready-made demo campaigns with fixed numbers:
   // - Budget Ceiling Demo: approving its pending clip needs $500.00 against
   //   a $1.00 budget -> BUDGET_EXCEEDED with exact numbers.
   // - Auto-Complete Demo: approving locks exactly the remaining budget
-  //   -> campaign flips to completed on its own. (Approve it BEFORE running
-  //   ingest — later view growth raises the required amount past the budget.)
+  //   -> the campaign flips to completed on its own.
   const [ceiling, autoComplete] = await db
     .insert(campaigns)
     .values([
@@ -185,14 +183,27 @@ async function main() {
       },
     ])
     .returning();
+  // Seed TODAY's metric row as well as yesterday's. Ingest skips a day that
+  // already has a row (ON CONFLICT DO NOTHING), so these two scenarios keep
+  // their exact numbers no matter how many times ingest runs today — the
+  // demos work in any order.
   await db.insert(submissionMetrics).values(
-    demoSubs.map((d) => ({
-      submissionId: d.id,
-      capturedAt: dateStr(daysFromNow(-1)),
-      views: 5_000,
-      likes: 400,
-      comments: 30,
-    })),
+    demoSubs.flatMap((d) => [
+      {
+        submissionId: d.id,
+        capturedAt: dateStr(daysFromNow(-1)),
+        views: 4_000,
+        likes: 300,
+        comments: 20,
+      },
+      {
+        submissionId: d.id,
+        capturedAt: dateStr(daysFromNow(0)),
+        views: 5_000,
+        likes: 400,
+        comments: 30,
+      },
+    ]),
   );
 
   // a few days of metric history for the approved clip (views only go up)
@@ -212,7 +223,7 @@ async function main() {
   );
 
   console.log(
-    `seeded: 4 users, 7 campaigns, ${subs.length + demoSubs.length} submissions (incl. 2 demo scenarios), 6 metric rows`,
+    `seeded: 4 users, 7 campaigns, ${subs.length + demoSubs.length} submissions (incl. 2 demo scenarios), 8 metric rows`,
   );
   process.exit(0);
 }
