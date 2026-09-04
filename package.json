@@ -7,13 +7,15 @@
     "build": "next build --turbopack",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "ingest": "tsx --env-file=.env scripts/ingest.ts",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx --env-file=.env scripts/seed.ts",
-    "test": "vitest run",
-    "ingest": "tsx --env-file=.env scripts/ingest.ts"
+    "db:studio": "drizzle-kit studio",
+    "db:reset": "docker compose down -v && pnpm db:up && pnpm db:migrate && pnpm db:seed"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
@@ -28,7 +30,6 @@
     "lucide-react": "^1.41.0",
     "next": "15.5.25",
     "postgres": "^3.4.9",
-    "radix-ui": "^1.6.7",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-hook-form": "^7.87.0",

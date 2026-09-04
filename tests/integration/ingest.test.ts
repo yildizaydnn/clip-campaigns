@@ -29,7 +29,7 @@ const rowsFor = (submissionId: string) =>
     .orderBy(asc(submissionMetrics.capturedAt));
 
 describe("metric ingest", () => {
-  it("writes one row per approved submission per day; non-approved are untouched", async () => {
+  it("tracks pending and approved daily; rejected clips are left alone", async () => {
     const approved = await approvedSub(1_000);
     const creator = await createUser();
     const campaign = await createCampaign();
@@ -37,13 +37,25 @@ describe("metric ingest", () => {
       campaignId: campaign.id,
       creatorId: creator.id,
     });
+    const rejected = await createSubmission({
+      campaignId: campaign.id,
+      creatorId: creator.id,
+      status: "rejected",
+      rejectionReason: "off brief",
+    });
 
     const summary = await runIngest({ day: DAY });
-    expect(summary).toMatchObject({ written: 1, skipped: 0, failed: [] });
+    // pending syncs too: the creator screen needs current views and an
+    // estimated earnings figure BEFORE approval (brief 4.3)
+    expect(summary).toMatchObject({ written: 2, skipped: 0, failed: [] });
 
-    expect(await rowsFor(pending.id)).toHaveLength(0);
-    const rows = await rowsFor(approved.id);
-    expect(rows.filter((r) => r.capturedAt === DAY)).toHaveLength(1);
+    expect(await rowsFor(rejected.id)).toHaveLength(0);
+    expect(
+      (await rowsFor(pending.id)).filter((r) => r.capturedAt === DAY),
+    ).toHaveLength(1);
+    expect(
+      (await rowsFor(approved.id)).filter((r) => r.capturedAt === DAY),
+    ).toHaveLength(1);
   });
 
   it("is idempotent: a second run for the same day leaves the data as it was", async () => {

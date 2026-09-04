@@ -6,8 +6,10 @@ import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { formatCents } from "@/lib/money";
 import {
   campaignFormSchema,
+  CAMPAIGN_STATUSES,
   PLATFORMS,
   type CampaignFormValues,
 } from "@/lib/schemas/campaign";
@@ -29,9 +31,23 @@ export function CampaignForm({
 }) {
   const form = useForm<CampaignFormValues>({
     resolver: zodResolver(campaignFormSchema),
-    defaultValues,
+    defaultValues: { status: "draft", ...defaultValues },
   });
   const { errors } = form.formState;
+
+  const payoutCents = form.watch("payoutPer1kViewsCents");
+  const budgetCents = form.watch("totalBudgetCents");
+  const validCents = (n: number | undefined): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n > 0;
+
+  const payoutPreview = validCents(payoutCents)
+    ? `= ${formatCents(payoutCents)} per 1,000 views`
+    : "Whole cents — e.g. 150 = $1.50";
+  const budgetPreview = validCents(budgetCents)
+    ? validCents(payoutCents)
+      ? `= ${formatCents(budgetCents)} · funds ~${Math.floor(budgetCents / payoutCents).toLocaleString("en-US")}k views`
+      : `= ${formatCents(budgetCents)}`
+    : "Whole cents — e.g. 50000 = $500.00";
 
   const field = (name: keyof CampaignFormValues) =>
     errors[name] ? (
@@ -57,6 +73,24 @@ export function CampaignForm({
         {field("title")}
       </div>
 
+      <div className="space-y-1.5">
+        <Label htmlFor="status">Status</Label>
+        <select
+          id="status"
+          className="h-9 w-full rounded-md border bg-background px-2 text-sm"
+          {...form.register("status")}
+        >
+          {CAMPAIGN_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">
+          Creators only see campaigns while they are active. “Completed” also
+          happens automatically when the budget runs out.
+        </p>
+        {field("status")}
+      </div>
+
       <fieldset className="space-y-1.5">
         <legend className="text-sm font-medium">Platforms</legend>
         <div className="flex gap-4">
@@ -78,8 +112,14 @@ export function CampaignForm({
             type="number"
             inputMode="numeric"
             aria-invalid={!!errors.payoutPer1kViewsCents}
+            aria-describedby="payout-preview"
             {...form.register("payoutPer1kViewsCents", { valueAsNumber: true })}
           />
+          {/* amounts are stored and entered as integer cents; echo the
+              formatted value back so the unit is never in doubt */}
+          <p id="payout-preview" aria-live="polite" className="text-xs text-muted-foreground">
+            {payoutPreview}
+          </p>
           {field("payoutPer1kViewsCents")}
         </div>
         <div className="space-y-1.5">
@@ -89,8 +129,12 @@ export function CampaignForm({
             type="number"
             inputMode="numeric"
             aria-invalid={!!errors.totalBudgetCents}
+            aria-describedby="budget-preview"
             {...form.register("totalBudgetCents", { valueAsNumber: true })}
           />
+          <p id="budget-preview" aria-live="polite" className="text-xs text-muted-foreground">
+            {budgetPreview}
+          </p>
           {field("totalBudgetCents")}
         </div>
       </div>

@@ -28,6 +28,7 @@ export const campaignFormSchema = z
       .number({ message: "Enter a whole number of cents" })
       .int("Whole cents only")
       .positive("Must be positive"),
+    status: z.enum(CAMPAIGN_STATUSES),
     startsAt: z.date({ message: "Pick a start date" }),
     endsAt: z.date({ message: "Pick an end date" }),
   })

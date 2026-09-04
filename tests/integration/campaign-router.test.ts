@@ -86,6 +86,7 @@ describe("campaign.update — budget guard", () => {
         id: campaign.id,
         data: {
           title: campaign.title,
+          status: campaign.status,
           platforms: campaign.platforms,
           payoutPer1kViewsCents: campaign.payoutPer1kViewsCents,
           totalBudgetCents: 4_000, // below the 5_000 already locked
@@ -100,6 +101,7 @@ describe("campaign.update — budget guard", () => {
       id: campaign.id,
       data: {
         title: campaign.title,
+        status: campaign.status,
         platforms: campaign.platforms,
         payoutPer1kViewsCents: campaign.payoutPer1kViewsCents,
         totalBudgetCents: 20_000,

@@ -44,6 +44,7 @@ export default function EditCampaignPage() {
         serverError={update.error?.message ?? null}
         defaultValues={{
           title: c.title,
+          status: c.status,
           platforms: c.platforms,
           payoutPer1kViewsCents: c.payoutPer1kViewsCents,
           totalBudgetCents: c.totalBudgetCents,

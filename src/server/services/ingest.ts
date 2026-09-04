@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, ne } from "drizzle-orm";
 
 import { db } from "@/db";
 import { submissionMetrics, submissions } from "@/db/schema";
@@ -10,7 +10,7 @@ import { submissionMetrics, submissions } from "@/db/schema";
  * failure isolation.
  *
  * Guarantees, each carried by a distinct mechanism:
- * - one row per approved submission per day  -> composite PK
+ * - one row per tracked submission per day   -> composite PK
  * - running twice for the same day changes nothing -> ON CONFLICT DO NOTHING
  * - views only ever go up                    -> max(last, fetched) before insert
  * - one failure doesn't stop the run         -> per-submission try/catch
@@ -46,10 +46,14 @@ export async function runIngest(opts?: {
   const day = opts?.day ?? new Date().toISOString().slice(0, 10);
   const fetchMetrics = opts?.fetchMetrics ?? fakeFetcher;
 
+  // Pending submissions sync too — the creator screen shows "current views
+  // and estimated earnings" (brief 4.3), which needs view counts before
+  // approval, and approving with a metric history locks a real amount
+  // instead of zero. Only rejected clips stop being tracked.
   const targets = await db
     .select({ id: submissions.id })
     .from(submissions)
-    .where(eq(submissions.status, "approved"));
+    .where(ne(submissions.status, "rejected"));
 
   const summary: IngestSummary = {
     day,

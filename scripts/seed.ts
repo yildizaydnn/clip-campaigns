@@ -23,6 +23,7 @@ async function main() {
   await db.delete(campaigns);
   await db.delete(users);
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [admin, c1, c2, c3] = await db
     .insert(users)
     .values([
@@ -135,6 +136,65 @@ async function main() {
   const approved = subs[4];
   if (!approved) throw new Error("expected the seeded approved submission");
 
+  // Two ready-made demo campaigns so the budget ceiling and auto-completion
+  // can be shown deterministically (no dependence on random view growth):
+  // - Budget Ceiling Demo: approving its pending clip needs $500.00 against
+  //   a $1.00 budget -> BUDGET_EXCEEDED with exact numbers.
+  // - Auto-Complete Demo: approving locks exactly the remaining budget
+  //   -> campaign flips to completed on its own. (Approve it BEFORE running
+  //   ingest — later view growth raises the required amount past the budget.)
+  const [ceiling, autoComplete] = await db
+    .insert(campaigns)
+    .values([
+      {
+        title: "Budget Ceiling Demo",
+        platforms: ["tiktok"],
+        payoutPer1kViewsCents: 10_000, // $100 per 1k
+        totalBudgetCents: 100, // $1.00
+        status: "active",
+        startsAt: daysFromNow(-5),
+        endsAt: daysFromNow(25),
+      },
+      {
+        title: "Auto-Complete Demo",
+        platforms: ["tiktok"],
+        payoutPer1kViewsCents: 100,
+        totalBudgetCents: 500, // exactly floor(5000/1000) * 100
+        status: "active",
+        startsAt: daysFromNow(-5),
+        endsAt: daysFromNow(25),
+      },
+    ])
+    .returning();
+  if (!ceiling || !autoComplete) throw new Error("expected demo campaigns");
+
+  const demoSubs = await db
+    .insert(submissions)
+    .values([
+      {
+        campaignId: ceiling.id,
+        creatorId: c3.id,
+        postUrl: "https://www.tiktok.com/@creator3/video/7500000000000000001",
+        platform: "tiktok",
+      },
+      {
+        campaignId: autoComplete.id,
+        creatorId: c3.id,
+        postUrl: "https://www.tiktok.com/@creator3/video/7500000000000000002",
+        platform: "tiktok",
+      },
+    ])
+    .returning();
+  await db.insert(submissionMetrics).values(
+    demoSubs.map((d) => ({
+      submissionId: d.id,
+      capturedAt: dateStr(daysFromNow(-1)),
+      views: 5_000,
+      likes: 400,
+      comments: 30,
+    })),
+  );
+
   // a few days of metric history for the approved clip (views only go up)
   await db.insert(submissionMetrics).values(
     [
@@ -152,7 +212,7 @@ async function main() {
   );
 
   console.log(
-    `seeded: ${[admin, c1, c2, c3].length} users, 5 campaigns, ${subs.length} submissions, 4 metric rows`,
+    `seeded: 4 users, 7 campaigns, ${subs.length + demoSubs.length} submissions (incl. 2 demo scenarios), 6 metric rows`,
   );
   process.exit(0);
 }
