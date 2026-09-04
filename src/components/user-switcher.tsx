@@ -1,26 +1,30 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
+import { canViewPath, ROLE_HOME } from "@/lib/auth/routes";
 import { useTRPC } from "@/lib/trpc/client";
 
 /**
- * This demo's stand-in for authentication: pick who you are. Lives in the
- * global header, works on the deployed demo as well.
+ * This demo's stand-in for authentication: pick who you are. On switch, if
+ * the new user can't view the current page, they land on their home instead
+ * of a permission wall.
  */
 export function UserSwitcher() {
   const trpc = useTRPC();
   const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
 
   const me = useQuery(trpc.session.me.queryOptions());
   const list = useQuery(trpc.session.listUsers.queryOptions());
   const switchUser = useMutation(
     trpc.session.switchUser.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async ({ role }) => {
         await queryClient.invalidateQueries();
-        router.refresh();
+        if (!canViewPath(role, pathname)) router.push(ROLE_HOME[role]);
+        else router.refresh();
       },
     }),
   );

@@ -25,13 +25,14 @@ export const sessionRouter = router({
     .input(z.object({ userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       const [target] = await ctx.db
-        .select({ id: users.id })
+        .select({ id: users.id, role: users.role })
         .from(users)
         .where(eq(users.id, input.userId));
       if (!target) throw new TRPCError({ code: "NOT_FOUND" });
 
       // The only place a cookie is written — through tRPC, not a REST route.
       ctx.resHeaders?.append("Set-Cookie", sessionSetCookie(target.id));
-      return { ok: true as const };
+      // role returned so the client can route to the new user's home
+      return { ok: true as const, role: target.role };
     }),
 });
