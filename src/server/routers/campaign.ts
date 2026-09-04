@@ -13,32 +13,34 @@ import { adminProcedure, creatorProcedure, router } from "../trpc";
 
 export const campaignRouter = router({
   /** Server-side pagination, title search and status filter — per the brief. */
-  list: adminProcedure.input(listCampaignsSchema).query(async ({ ctx, input }) => {
-    const where = and(
-      input.status ? eq(campaigns.status, input.status) : undefined,
-      input.search ? ilike(campaigns.title, `%${input.search}%`) : undefined,
-    );
-    const [items, counted] = await Promise.all([
-      ctx.db
-        .select()
-        .from(campaigns)
-        .where(where)
-        .orderBy(desc(campaigns.createdAt))
-        .limit(input.pageSize)
-        .offset((input.page - 1) * input.pageSize),
-      ctx.db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(campaigns)
-        .where(where),
-    ]);
-    const total = counted[0]?.count ?? 0;
-    return {
-      items,
-      total,
-      page: input.page,
-      pageCount: Math.max(1, Math.ceil(total / input.pageSize)),
-    };
-  }),
+  list: adminProcedure
+    .input(listCampaignsSchema)
+    .query(async ({ ctx, input }) => {
+      const where = and(
+        input.status ? eq(campaigns.status, input.status) : undefined,
+        input.search ? ilike(campaigns.title, `%${input.search}%`) : undefined,
+      );
+      const [items, counted] = await Promise.all([
+        ctx.db
+          .select()
+          .from(campaigns)
+          .where(where)
+          .orderBy(desc(campaigns.createdAt))
+          .limit(input.pageSize)
+          .offset((input.page - 1) * input.pageSize),
+        ctx.db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(campaigns)
+          .where(where),
+      ]);
+      const total = counted[0]?.count ?? 0;
+      return {
+        items,
+        total,
+        page: input.page,
+        pageCount: Math.max(1, Math.ceil(total / input.pageSize)),
+      };
+    }),
 
   /** Creator browse: active campaigns with rate and remaining budget. */
   activeList: creatorProcedure.query(({ ctx }) =>
@@ -90,6 +92,18 @@ export const campaignRouter = router({
   update: adminProcedure
     .input(updateCampaignSchema)
     .mutation(async ({ ctx, input }) => {
+      const [current] = await ctx.db
+        .select({ spentCents: campaigns.spentCents })
+        .from(campaigns)
+        .where(eq(campaigns.id, input.id));
+      if (!current) throw new TRPCError({ code: "NOT_FOUND" });
+      // don't let the DB check constraint be the messenger: a budget below
+      // what's already locked in is a user error with a readable answer
+      if (input.data.totalBudgetCents < current.spentCents)
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Budget can't go below what's already locked in (${current.spentCents} cents).`,
+        });
       const [row] = await ctx.db
         .update(campaigns)
         .set(input.data)

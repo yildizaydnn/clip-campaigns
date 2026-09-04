@@ -30,10 +30,10 @@ export function UserSwitcher() {
   );
 
   return (
-    <label className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">Acting as</span>
+    <label className="flex w-full flex-col gap-1 text-sm md:max-w-full">
+      <span className="text-xs text-muted-foreground">Acting as</span>
       <select
-        className="h-8 rounded-md border bg-background px-2"
+        className="h-8 w-full min-w-0 rounded-md border bg-background px-2"
         value={me.data?.id ?? ""}
         disabled={list.isPending || switchUser.isPending}
         onChange={(e) => {

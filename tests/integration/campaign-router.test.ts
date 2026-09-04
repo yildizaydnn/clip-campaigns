@@ -65,3 +65,48 @@ describe("campaign.overview — daily series", () => {
     expect(o.approvedViews).toBe(9_000); // latest metric, not the sum
   });
 });
+
+describe("campaign.update — budget guard", () => {
+  it("refuses lowering the budget below locked-in spend, with a readable error", async () => {
+    const caller = await asAdmin();
+    const creator = await createUser();
+    const campaign = await createCampaign({
+      payoutPer1kViewsCents: 100,
+      totalBudgetCents: 10_000,
+    });
+    const sub = await createSubmission({
+      campaignId: campaign.id, creatorId: creator.id,
+    });
+    await addMetric(sub.id, 50_000); // locks 5_000 on approval
+    const { approveSubmission } = await import("@/server/services/approval");
+    await approveSubmission(sub.id);
+
+    await expect(
+      caller.campaign.update({
+        id: campaign.id,
+        data: {
+          title: campaign.title,
+          platforms: campaign.platforms,
+          payoutPer1kViewsCents: campaign.payoutPer1kViewsCents,
+          totalBudgetCents: 4_000, // below the 5_000 already locked
+          startsAt: campaign.startsAt,
+          endsAt: campaign.endsAt,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+
+    // raising it is fine
+    const updated = await caller.campaign.update({
+      id: campaign.id,
+      data: {
+        title: campaign.title,
+        platforms: campaign.platforms,
+        payoutPer1kViewsCents: campaign.payoutPer1kViewsCents,
+        totalBudgetCents: 20_000,
+        startsAt: campaign.startsAt,
+        endsAt: campaign.endsAt,
+      },
+    });
+    expect(updated.totalBudgetCents).toBe(20_000);
+  });
+});
