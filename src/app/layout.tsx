@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 import { TRPCReactProvider } from "@/lib/trpc/client";
+import { UserSwitcher } from "@/components/user-switcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,7 +30,13 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <TRPCReactProvider>
+          <header className="flex items-center justify-between border-b px-4 py-2">
+            <span className="font-semibold">Clip Campaigns</span>
+            <UserSwitcher />
+          </header>
+          {children}
+        </TRPCReactProvider>
       </body>
     </html>
   );
