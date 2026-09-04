@@ -95,3 +95,69 @@ describe("session router", () => {
   });
 
 });
+
+describe("ownership — enforced in the WHERE clause", () => {
+  it("a creator cannot reach another creator's submission, even by handcrafted id", async () => {
+    const { createCampaign, createSubmission, createUser } = await import(
+      "../helpers/factories"
+    );
+    const [alice, bob] = await Promise.all([createUser(), createUser()]);
+    const campaign = await createCampaign();
+    const bobsSub = await createSubmission({
+      campaignId: campaign.id,
+      creatorId: bob!.id,
+    });
+
+    const { caller: asAlice } = callerFor({
+      id: alice!.id,
+      email: alice!.email,
+      role: "creator",
+    });
+    // NOT_FOUND, not FORBIDDEN: a foreign row is indistinguishable from a
+    // missing one, so ids cannot be probed for existence
+    await expect(asAlice.submission.byId({ id: bobsSub.id })).rejects.toMatchObject(
+      { code: "NOT_FOUND" },
+    );
+
+    const { caller: asBob } = callerFor({
+      id: bob!.id,
+      email: bob!.email,
+      role: "creator",
+    });
+    expect((await asBob.submission.byId({ id: bobsSub.id })).id).toBe(bobsSub.id);
+  });
+
+  it("admins can read any submission; creators cannot approve or reject", async () => {
+    const { createCampaign, createSubmission, createUser } = await import(
+      "../helpers/factories"
+    );
+    const [admin, creator] = await Promise.all([
+      createUser({ role: "admin" }),
+      createUser(),
+    ]);
+    const campaign = await createCampaign();
+    const sub = await createSubmission({
+      campaignId: campaign.id,
+      creatorId: creator!.id,
+    });
+
+    const { caller: asAdmin } = callerFor({
+      id: admin!.id,
+      email: admin!.email,
+      role: "admin",
+    });
+    expect((await asAdmin.submission.byId({ id: sub.id })).id).toBe(sub.id);
+
+    const { caller: asCreator } = callerFor({
+      id: creator!.id,
+      email: creator!.email,
+      role: "creator",
+    });
+    await expect(
+      asCreator.submission.approve({ submissionId: sub.id }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(
+      asCreator.submission.reject({ submissionId: sub.id, reason: "nope" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});

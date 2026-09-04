@@ -54,3 +54,15 @@ export async function createSubmission(
   if (!row) throw new Error("createSubmission: insert returned no row");
   return row;
 }
+
+export async function addMetric(
+  submissionId: string,
+  views: number,
+  daysAgo = 0,
+) {
+  const { submissionMetrics } = await import("@/db/schema");
+  const day = new Date(Date.now() - daysAgo * DAY).toISOString().slice(0, 10);
+  await db
+    .insert(submissionMetrics)
+    .values({ submissionId, capturedAt: day, views });
+}
