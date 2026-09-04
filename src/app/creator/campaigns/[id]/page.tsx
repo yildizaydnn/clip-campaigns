@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "next/navigation";
 
+import { PageHeader } from "@/components/page-header";
 import { SubmissionForm } from "@/components/submission-form";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,14 +17,14 @@ export default function CreatorCampaignPage() {
 
   if (campaign.isPending)
     return (
-      <main className="mx-auto max-w-4xl space-y-4 p-6" aria-busy="true">
-        <Skeleton className="h-8 w-72" />
+      <main className="mx-auto w-full max-w-6xl space-y-4 px-6 py-6" aria-busy="true">
+        <Skeleton className="h-16 w-full" />
         <Skeleton className="h-48 w-full max-w-lg" />
       </main>
     );
   if (campaign.isError)
     return (
-      <main className="mx-auto max-w-4xl p-6">
+      <main className="mx-auto w-full max-w-6xl px-6 py-6">
         <p role="alert" className="text-destructive">
           Campaign not found or no longer active.
         </p>
@@ -32,23 +33,21 @@ export default function CreatorCampaignPage() {
 
   const c = campaign.data;
   return (
-    <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <div>
-        <h1 className="text-xl font-semibold">{c.title}</h1>
-        <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          {c.platforms.map((p) => (
-            <Badge key={p} variant="outline">{p}</Badge>
-          ))}
-          <span>
-            {formatCents(c.payoutPer1kViewsCents)} per 1,000 views ·{" "}
-            {formatCents(c.totalBudgetCents - c.spentCents)} budget left ·{" "}
-            {c.startsAt.toLocaleDateString()} → {c.endsAt.toLocaleDateString()}
-          </span>
-        </p>
-      </div>
+    <main className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
+      <PageHeader
+        title={c.title}
+        description={`${formatCents(c.payoutPer1kViewsCents)} per 1,000 views · ${formatCents(c.totalBudgetCents - c.spentCents)} budget left · ${c.startsAt.toLocaleDateString()} → ${c.endsAt.toLocaleDateString()}`}
+      >
+        {c.platforms.map((p) => (
+          <Badge key={p} variant="outline">{p}</Badge>
+        ))}
+      </PageHeader>
 
-      <section aria-labelledby="submit-heading" className="space-y-3">
-        <h2 id="submit-heading" className="text-lg font-semibold">
+      <section
+        aria-labelledby="submit-heading"
+        className="max-w-xl rounded-lg border p-5"
+      >
+        <h2 id="submit-heading" className="mb-4 text-base font-semibold">
           Submit a clip
         </h2>
         <SubmissionForm campaignId={c.id} allowedPlatforms={c.platforms} />

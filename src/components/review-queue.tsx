@@ -94,11 +94,14 @@ export function ReviewQueue({ campaignId }: { campaignId: string }) {
       )}
 
       {queue.data.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing waiting for review.</p>
+        <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
+          Nothing waiting for review.
+        </div>
       ) : (
+        <div className="overflow-hidden rounded-lg border">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-muted/50">
               <TableHead scope="col">Creator</TableHead>
               <TableHead scope="col">Post</TableHead>
               <TableHead scope="col" className="text-right">Views</TableHead>
@@ -134,6 +137,7 @@ export function ReviewQueue({ campaignId }: { campaignId: string }) {
             ))}
           </TableBody>
         </Table>
+        </div>
       )}
 
       <Dialog open={rejecting !== null} onOpenChange={(o) => !o && setRejecting(null)}>

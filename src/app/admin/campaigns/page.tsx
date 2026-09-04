@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/page-header";
+import { CampaignStatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,13 +36,15 @@ export default function CampaignListPage() {
   );
 
   return (
-    <main className="mx-auto max-w-4xl space-y-4 p-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Campaigns</h1>
-        <Button render={<Link href="/admin/campaigns/new" />}>
+    <main className="mx-auto w-full max-w-6xl space-y-6 px-6 py-6">
+      <PageHeader
+        title="Campaigns"
+        description="Create campaigns, review submissions and track budgets."
+      >
+        <Button nativeButton={false} render={<Link href="/admin/campaigns/new" />}>
           New campaign
         </Button>
-      </div>
+      </PageHeader>
 
       <div className="flex gap-2">
         <Input
@@ -53,7 +56,7 @@ export default function CampaignListPage() {
         />
         <select
           aria-label="Filter by status"
-          className="h-9 rounded-md border bg-background px-2 text-sm"
+          className="h-8 rounded-md border bg-background px-2 text-sm"
           value={status}
           onChange={(e) => { setStatus(e.target.value); setPage(1); }}
         >
@@ -67,7 +70,7 @@ export default function CampaignListPage() {
       {list.isPending ? (
         <div className="space-y-2" aria-busy="true">
           {Array.from({ length: 5 }, (_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
+            <Skeleton key={i} className="h-11 w-full" />
           ))}
         </div>
       ) : list.isError ? (
@@ -75,44 +78,49 @@ export default function CampaignListPage() {
           Couldn&apos;t load campaigns. {list.error.message}
         </p>
       ) : list.data.items.length === 0 ? (
-        <p className="py-8 text-center text-muted-foreground">
-          No campaigns match. Adjust the search or create one.
-        </p>
+        <div className="rounded-lg border border-dashed py-14 text-center">
+          <p className="font-medium">No campaigns match</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Adjust the search, or create a new campaign.
+          </p>
+        </div>
       ) : (
         <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead scope="col">Title</TableHead>
-                <TableHead scope="col">Status</TableHead>
-                <TableHead scope="col">Platforms</TableHead>
-                <TableHead scope="col" className="text-right">Payout / 1k</TableHead>
-                <TableHead scope="col" className="text-right">Budget</TableHead>
-                <TableHead scope="col" className="text-right">Spent</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {list.data.items.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <Link
-                      className="font-medium underline-offset-2 hover:underline"
-                      href={`/admin/campaigns/${c.id}`}
-                    >
-                      {c.title}
-                    </Link>
-                  </TableCell>
-                  <TableCell><Badge variant="outline">{c.status}</Badge></TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {c.platforms.join(", ")}
-                  </TableCell>
-                  <TableCell className="text-right">{formatCents(c.payoutPer1kViewsCents)}</TableCell>
-                  <TableCell className="text-right">{formatCents(c.totalBudgetCents)}</TableCell>
-                  <TableCell className="text-right">{formatCents(c.spentCents)}</TableCell>
+          <div className="overflow-hidden rounded-lg border">
+            <Table>
+              <TableHeader className="bg-muted/50">
+                <TableRow>
+                  <TableHead scope="col">Title</TableHead>
+                  <TableHead scope="col">Status</TableHead>
+                  <TableHead scope="col">Platforms</TableHead>
+                  <TableHead scope="col" className="text-right">Payout / 1k</TableHead>
+                  <TableHead scope="col" className="text-right">Budget</TableHead>
+                  <TableHead scope="col" className="text-right">Spent</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {list.data.items.map((c) => (
+                  <TableRow key={c.id} className="hover:bg-muted/40">
+                    <TableCell>
+                      <Link
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                        href={`/admin/campaigns/${c.id}`}
+                      >
+                        {c.title}
+                      </Link>
+                    </TableCell>
+                    <TableCell><CampaignStatusBadge status={c.status} /></TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {c.platforms.join(", ")}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCents(c.payoutPer1kViewsCents)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCents(c.totalBudgetCents)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatCents(c.spentCents)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
               {list.data.total} campaigns · page {list.data.page} of {list.data.pageCount}
