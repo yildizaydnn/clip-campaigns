@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "tsx --env-file=.env scripts/seed.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "ingest": "tsx --env-file=.env scripts/ingest.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
