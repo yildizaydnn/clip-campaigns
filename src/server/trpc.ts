@@ -12,7 +12,7 @@ const t = initTRPC.context<Context>().create({
       ...shape,
       data: {
         ...shape.data,
-        // typed errors the UI can act on (FLOWS: BUDGET_EXCEEDED etc.)
+        // typed errors the UI can act on, e.g. BUDGET_EXCEEDED
         appCode: error instanceof AppError ? error.appCode : null,
         appPayload: error instanceof AppError ? (error.payload ?? null) : null,
         // field-level validation errors, bound back onto forms

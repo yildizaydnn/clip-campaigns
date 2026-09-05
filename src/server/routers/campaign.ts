@@ -23,10 +23,10 @@ export const campaignRouter = router({
       const where = and(
         input.status ? eq(campaigns.status, input.status) : undefined,
         // % and _ are ILIKE wildcards; a user typing them means the literal
-      // character, not "match anything"
-      input.search
-        ? ilike(campaigns.title, `%${escapeLikePattern(input.search)}%`)
-        : undefined,
+        // character, not "match anything"
+        input.search
+          ? ilike(campaigns.title, `%${escapeLikePattern(input.search)}%`)
+          : undefined,
       );
       const [items, counted] = await Promise.all([
         ctx.db

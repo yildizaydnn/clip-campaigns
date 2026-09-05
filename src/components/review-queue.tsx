@@ -13,6 +13,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { appErrorCode, appErrorPayload } from "@/lib/errors";
 import { formatCents } from "@/lib/money";
 import { useTRPC } from "@/lib/trpc/client";
 
@@ -41,16 +42,15 @@ export function ReviewQueue({ campaignId }: { campaignId: string }) {
     trpc.submission.approve.mutationOptions({
       onSuccess: () => { setActionError(null); void refresh(); },
       onError: (e) => {
-        const data = e.data as
-          | { appCode?: string | null; appPayload?: { remainingCents?: number; requiredCents?: number } | null }
-          | undefined;
-        if (data?.appCode === "BUDGET_EXCEEDED" && data.appPayload) {
+        // narrowed by code — no casting, the payload fields are typed
+        const budget = appErrorPayload(e, "BUDGET_EXCEEDED");
+        if (budget) {
           setActionError(
-            `Budget exceeded: this approval needs ${formatCents(data.appPayload.requiredCents ?? 0)}, but only ${formatCents(data.appPayload.remainingCents ?? 0)} remains.`,
+            `Budget exceeded: this approval needs ${formatCents(budget.requiredCents)}, but only ${formatCents(budget.remainingCents)} remains.`,
           );
-        } else if (data?.appCode === "ALREADY_REVIEWED") {
+        } else if (appErrorCode(e) === "ALREADY_REVIEWED") {
           setActionError("Already reviewed by someone else — list refreshed.");
-        } else if (data?.appCode === "CAMPAIGN_NOT_ACTIVE") {
+        } else if (appErrorCode(e) === "CAMPAIGN_NOT_ACTIVE") {
           setActionError("This campaign is no longer active.");
         } else {
           setActionError(e.message);

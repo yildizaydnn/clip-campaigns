@@ -136,7 +136,7 @@ export const submissionRouter = router({
         rejectionReason: r.rejection_reason,
         campaignTitle: r.campaign_title,
         views: r.views,
-        // frozen at approval (decision 5.1) vs live estimate while pending
+        // frozen at approval time vs a live estimate while still pending
         earningsCents: frozen
           ? (r.locked_earnings_cents ?? 0)
           : calculateEarningsCents(r.views, r.payout_per_1k_views_cents),

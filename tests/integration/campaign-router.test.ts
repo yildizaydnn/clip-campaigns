@@ -174,7 +174,16 @@ describe("campaign.update — concurrency", () => {
         data: { ...base, totalBudgetCents: 4_000 },
       }),
     ]);
-    expect(results.some((r) => r.status === "rejected")).toBe(true);
+
+    // Exactly one wins, whichever gets the row lock first: if the approval
+    // lands, the budget cut can no longer fit above spend; if the cut lands,
+    // the approval no longer fits under the budget.
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const [loser] = results.filter((r) => r.status === "rejected");
+    expect(loser).toBeDefined();
+    expect(
+      ["BUDGET_EXCEEDED", "BUDGET_BELOW_SPEND"],
+    ).toContain((loser as PromiseRejectedResult).reason.appCode);
 
     const { db } = await import("@/db");
     const { campaigns } = await import("@/db/schema");

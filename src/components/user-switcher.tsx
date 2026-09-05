@@ -21,8 +21,12 @@ export function UserSwitcher() {
   const list = useQuery(trpc.session.listUsers.queryOptions());
   const switchUser = useMutation(
     trpc.session.switchUser.mutationOptions({
-      onSuccess: async ({ role }) => {
-        await queryClient.invalidateQueries();
+      onSuccess: ({ role }) => {
+        // clear() is synchronous: it drops the previous user's cached data so
+        // nothing of theirs can render, without waiting on refetches for a
+        // page we are about to leave. Awaiting invalidateQueries here added a
+        // round trip to every switch for data that was thrown away.
+        queryClient.clear();
         if (!canViewPath(role, pathname)) router.push(ROLE_HOME[role]);
         else router.refresh();
       },

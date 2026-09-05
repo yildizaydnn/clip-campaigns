@@ -1,4 +1,4 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Tests run against a real Postgres (the dedicated test database) because
@@ -16,7 +16,9 @@ if (!testDbUrl) throw new Error("TEST_DATABASE_URL is not set");
 
 export default defineConfig({
   resolve: {
-    alias: { "@": path.resolve(import.meta.dirname, "src") },
+    // fileURLToPath rather than import.meta.dirname: the latter needs Node
+    // 20.11+, and silently resolves to undefined below that
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   test: {
     environment: "node",

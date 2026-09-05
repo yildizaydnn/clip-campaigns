@@ -139,10 +139,13 @@ it a source that shrinks or throws.
   submitted at $4.00 per 1,000 views and got $2.00 would disagree. The fix is
   to copy the rate onto the submission at creation — I did not, because it means
   adding a second column to the submission table the brief specified.
-- **Two places where end-to-end typing stops.** Raw SQL results (`generate_series`,
-  `DISTINCT ON`) are cast to a hand-written shape, and `AppError.payload` is
-  cast on the client. Both are money-facing. A thin Zod parse and a union keyed
-  on `appCode` would close them.
+- **Raw SQL results are cast, not validated.** Queries using
+  `generate_series` and `DISTINCT ON` come back as `unknown` and are cast to a
+  hand-written shape, so changing the SQL without changing the type is a silent
+  break. A thin Zod parse on those rows would close it. (The other half of this
+  — typed error payloads — is done: each `appCode` declares its payload shape,
+  the server can't attach the wrong fields, and the client narrows on the code
+  instead of casting.)
 - **Ingest is an N+1.** Per-submission failure isolation means a query and an
   insert each, in sequence. Fine here, wrong against a real API — that wants
   batched fetches and a single `INSERT ... SELECT ... ON CONFLICT DO NOTHING`.

@@ -12,6 +12,7 @@ import {
   PLATFORM_URL_EXAMPLES,
   type CreateSubmissionInput,
 } from "@/lib/schemas/platform-url";
+import { appErrorCode } from "@/lib/errors";
 import { useTRPC } from "@/lib/trpc/client";
 
 export function SubmissionForm({
@@ -38,8 +39,7 @@ export function SubmissionForm({
         });
       },
       onError: (e) => {
-        const appCode = (e.data as { appCode?: string } | undefined)?.appCode;
-        if (appCode === "DUPLICATE_URL") {
+        if (appErrorCode(e) === "DUPLICATE_URL") {
           form.setError("postUrl", { message: e.message });
         }
       },
@@ -47,8 +47,7 @@ export function SubmissionForm({
   );
 
   const platform = form.watch("platform");
-  const appCode = (create.error?.data as { appCode?: string } | undefined)
-    ?.appCode;
+  const appCode = appErrorCode(create.error);
 
   return (
     <form
