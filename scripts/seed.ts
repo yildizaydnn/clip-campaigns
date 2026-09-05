@@ -23,7 +23,6 @@ async function main() {
   await db.delete(campaigns);
   await db.delete(users);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [admin, c1, c2, c3] = await db
     .insert(users)
     .values([

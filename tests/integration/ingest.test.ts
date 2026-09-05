@@ -6,7 +6,10 @@ import { submissionMetrics } from "@/db/schema";
 import { runIngest } from "@/server/services/ingest";
 import { addMetric, createCampaign, createSubmission, createUser } from "../helpers/factories";
 
-const DAY = "2026-09-04";
+// A fixed date, deliberately far from the dates the factories seed relative to
+// "today". Anchoring the ingest day to a constant while the fixtures move with
+// the clock makes the suite pass or fail depending on when it runs.
+const DAY = "2030-01-15";
 
 async function approvedSub(views?: number) {
   const creator = await createUser();

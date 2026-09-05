@@ -16,7 +16,7 @@ if (!testDbUrl) throw new Error("TEST_DATABASE_URL is not set");
 
 export default defineConfig({
   resolve: {
-    alias: { "@": path.resolve(__dirname, "src") },
+    alias: { "@": path.resolve(import.meta.dirname, "src") },
   },
   test: {
     environment: "node",

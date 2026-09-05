@@ -2,31 +2,17 @@
 
 ## Setup
 
-The steps are in [README.md](./README.md#setup). I tested them on a clean copy
-of the project — no `node_modules`, no `.env` file, and a fresh empty database
-container. I ran the steps exactly as written: install, copy `.env.example`,
-`db:up`, `db:migrate`, `db:seed`. Then `pnpm test` (43 tests, all passing) and
-`pnpm build`.
-
-Doing this found two problems I could not have seen from my own working
-directory:
-
-- The database container uses host port **5433**, not 5432. Most machines
-  already run Postgres on 5432, so the app would have connected to the wrong
-  database without any clear error.
-- `docker-compose.yml` had a fixed `container_name`. If a container with that
-  name already exists, `db:up` fails. I removed it so Docker Compose names the
-  container after the project folder instead.
-
----
+Steps are in [README.md](./README.md#setup). I ran them on a clean copy — no
+`node_modules`, no `.env`, its own empty container — then `pnpm test` (45
+passing) and `pnpm build`. That exercise caught two things I could not see from
+my own working directory: the container has to bind to host port 5433 because
+5432 is usually taken, and a pinned `container_name` in `docker-compose.yml`
+broke setup when a container by that name already existed.
 
 ## Concurrent approvals
 
-This was the hardest part of the task. Two admins approve at the same moment,
-the budget only covers one of them, and only one should go through.
-
-The whole approval happens in one transaction. The important part is how the
-budget is checked and updated — both happen in a single SQL statement:
+The approval runs in one transaction, and the budget check and the write are a
+single statement:
 
 ```sql
 UPDATE campaigns
@@ -36,276 +22,168 @@ UPDATE campaigns
    AND spent_cents + $earnings <= total_budget_cents;
 ```
 
-If this updates zero rows, it means the budget cannot cover the approval, so I
-throw an error and the transaction rolls back.
+Zero rows updated means the budget cannot cover it, so the approval is refused
+and the transaction rolls back.
 
-### Why this solves the race
+**Why it works.** Both requests target the same campaign row, so Postgres makes
+the second wait on the row lock. When it resumes, it re-checks the `WHERE`
+against the updated row, sees the higher `spent_cents`, updates nothing, and is
+refused. There is no gap between reading the budget and writing it for the
+other request to slip into.
 
-Both requests try to update the same campaign row. Postgres locks that row, so
-the second request has to wait until the first one commits.
+A second conditional update on the submission (`WHERE status = 'pending'`)
+stops the *same* submission being approved twice. The campaign update handles
+*different* submissions competing for the same budget. Both are needed.
 
-When the second one finally runs, Postgres checks the `WHERE` condition again —
-this time against the updated row. It now sees the new, higher `spent_cents`,
-the condition is false, and it updates zero rows. So the second approval is
-refused.
+**Ruled out:**
 
-The key point is that the check and the write happen in the same statement.
-There is no gap between reading the budget and updating it, so there is nothing
-for the second request to slip into.
+- **Read, check in JS, then write.** The bug this task is looking for: both
+  requests read "there's enough" before either writes.
+- **`SELECT ... FOR UPDATE`.** Works, but needs an extra query — the
+  conditional `UPDATE` already takes the same lock while doing the work.
+- **`SERIALIZABLE` + retries.** Works, but every mutation has to become
+  retry-safe. Heavy for a single-row update.
+- **Advisory locks.** Work, but the lock lives outside the schema, so nobody
+  writing new code knows to take it.
 
-### Two conditional updates, two different jobs
+**I made this mistake once.** Lowering a campaign's budget must not land below
+what approvals locked in, and my first version read `spent_cents`, compared it
+in JS, then wrote — the exact pattern above. I had assumed it was safe because
+no money moves on an edit. It isn't: a concurrent approval can raise spend in
+that gap. It now uses the same conditional `UPDATE`, and a test races a budget
+cut against an approval.
 
-The approval has a second conditional update, on the submission:
+**Also in the database.** `CHECK (spent_cents >= 0 AND spent_cents <=
+total_budget_cents)`. If application logic is ever wrong, the database still
+refuses to record an over-budget campaign.
 
-```sql
-UPDATE submissions SET status = 'approved', ...
- WHERE id = $id AND status = 'pending';
-```
+**On `spent_cents`.** It duplicates the sum of `locked_earnings_cents` over
+approved submissions. Storing it is what makes the single-statement check
+possible. Because it is duplicated it could drift, so a test runs a mix of
+concurrent approvals, rejections and refusals and asserts the two still match.
 
-This one stops the *same* submission being approved twice (which would take
-money from the budget twice). The campaign update handles *different*
-submissions competing for the same remaining budget. Both are needed.
+## Decisions the brief left open
 
-### Other approaches I looked at
+- **Earnings freeze at approval.** Views keep growing afterwards, so
+  recalculating would let an approved submission drift past the budget days
+  later. Earnings are computed once and stored in `locked_earnings_cents`.
+  Recalculating live and capping at the budget is arguably closer to what a
+  real product wants, but then the budget never settles and "first come, first
+  served" stops meaning anything. The UI shows both numbers side by side and
+  says why they differ; creators see **est.** before approval and **final**
+  after.
+- **Ingest tracks pending submissions too.** 4.5 asks for one row per approved
+  submission per day, but 4.3 wants creators to see current views and estimated
+  earnings — which is always zero if only approved clips sync, and locks $0
+  forever if a clip is approved before its first sync. I read 4.5's scope as a
+  minimum. Rejected clips stop being tracked.
+- **A submission with no metrics approves at zero.** A real state for a clip
+  submitted before the first sync. Nothing is debited.
+- **`paid` is in the schema but nothing sets it.** What triggers it is a
+  payment provider — out of scope. Better an unused enum value than a button
+  the brief did not ask for.
+- **Amounts are USD.** The brief says integer cents but not which currency.
+  Forms take cents directly, so there is no conversion, and echo the formatted
+  value while you type.
+- **Campaign dates are enforced on submission, not approval.** Reviewing a
+  queue after a campaign ends is normal; `status` already governs whether money
+  can move.
+- **Campaign status has no state machine.** An admin can set any status,
+  including pulling `completed` back to `active`. Deliberate — the money rules
+  depend on the current status, not the transition — but a real product would
+  want rules.
+- **The user switcher works in production.** "Dev-only switcher" and "a live
+  URL we can open" pull in opposite directions: disabled, there is no way to
+  sign in at all. It stays on, and is one guard away from dev-only
+  (`NODE_ENV === "production"` in `session.switchUser`). Worth stating plainly:
+  anyone who opens the deployed URL can act as an admin. Fine for a review
+  deployment with seed data, not for anything else.
 
-- **Read first, then write.** Run `SELECT SUM(...)`, check in JavaScript if
-  there is enough budget, then write. This is the bug the task is looking for:
-  both requests read "there is enough" before either writes, so both write and
-  the budget is exceeded. I wrote the concurrency test specifically to catch
-  this.
-- **`SELECT ... FOR UPDATE`.** This works. It locks the campaign row first, so
-  the second request waits and then reads the correct value. I did not use it
-  because it needs an extra query, and the conditional `UPDATE` already takes
-  the same lock while doing the actual work.
-- **`SERIALIZABLE` transactions with retries.** Also works, but Postgres then
-  aborts one of the transactions with an error, and my code has to catch that
-  error and retry the whole thing. That is a lot of extra handling for a
-  single-row update.
-- **Advisory locks.** These work too, but the lock is not part of the schema.
-  Someone writing new code later has no way to know they need to take it.
+## Left out on purpose
 
-### Extra safety in the database
-
-The `campaigns` table also has a check constraint:
-
-```sql
-CHECK (spent_cents >= 0 AND spent_cents <= total_budget_cents)
-```
-
-Even if my application code had a bug, the database itself would refuse to save
-a campaign that spent more than its budget. It was one line to add and it makes
-the rule impossible to break by accident.
-
-### About `spent_cents`
-
-`spent_cents` is a stored column, but it is really just the sum of
-`locked_earnings_cents` for all approved submissions. Storing it is a
-duplication, and normally I would avoid that — but the whole solution above
-depends on being able to check and update the budget in one statement, which
-needs a real column.
-
-Because it is duplicated, it could get out of sync. So I wrote a test
-(`tests/integration/invariant.test.ts`) that runs a mix of concurrent
-approvals, rejections and refused approvals, then checks that `spent_cents`
-still equals the sum of the approved submissions' earnings.
-
----
-
-## Decisions I had to make
-
-The brief does not answer these, so I picked an option and wrote down why.
-
-### Earnings are frozen when a submission is approved
-
-Views keep growing after approval. If earnings were always recalculated from
-the latest view count, an approved submission would keep getting more expensive
-and could push the campaign over its budget days later.
-
-So I calculate the earnings at approval time and store them in
-`locked_earnings_cents`. The budget is reduced once and never changes again for
-that submission.
-
-The other option is to always recalculate from the newest views and cap the
-campaign total at the budget. That is probably closer to what a real product
-would do, since the creator really did earn those views. I did not do it
-because the budget would then never be final — every ingest run could change
-who fits inside it, and "first come, first served" stops meaning anything if
-approval order does not decide who gets paid.
-
-Since this can look confusing in the UI, I made it visible instead of hiding
-it. The campaign overview shows "approved views" (which keeps growing) next to
-"locked at approval" (which does not), with a line explaining why. Creators see
-their earnings marked **est.** before approval and **final** after.
-
-### Ingest also tracks pending submissions
-
-Section 4.5 says one metric row per approved submission per day. But section
-4.3 says creators should see their current views and estimated earnings — and
-if only approved submissions get view counts, that estimate is always zero.
-
-There is also a worse problem: if a submission has no metrics at all and gets
-approved, its earnings are locked at $0 forever.
-
-So I read 4.5 as a minimum, not a limit, and sync every submission except
-rejected ones.
-
-### A submission with no metrics can still be approved
-
-Its earnings are 0 and nothing is taken from the budget. This is a real
-situation — a clip submitted before the first sync runs. Blocking the approval
-would mean admins have to wait for a background job before they can review
-anything.
-
-### `paid` exists in the schema but nothing sets it
-
-The data model asks for the status, but the brief never says what triggers it.
-In a real product it would be a payment provider, which is out of scope here. I
-left the enum value unused rather than adding a button the brief did not ask
-for.
-
-### Amounts are in US dollars
-
-The brief says integer cents but does not say which currency, so I used USD.
-The forms take cents directly instead of dollars, so there is no conversion or
-rounding anywhere. To make that less confusing, each money field shows what you
-typed in a readable form ("= $1.50 per 1,000 views") while you type.
-
-### Campaign dates are enforced when submitting, not when approving
-
-Submitting outside the campaign's start and end dates is refused on the server.
-Approving does not check the dates, because reviewing a queue after a campaign
-has ended is normal — and the campaign's `status` already decides whether money
-can move.
-
-### The user switcher works in production too
-
-It is not a development-only tool. It is how this demo signs you in, and the
-deployed version needs it so you can see both roles.
-
----
-
-## What I left out on purpose
-
-- **Real authentication.** The brief said a signed cookie with a userId is
-  enough, so that is what I built. I spent the time on the server side instead:
-  role checks in the tRPC procedures, ownership checks inside every query, and
-  tests that try to reach another creator's data by sending someone else's ID
-  directly.
-- **Custom design.** I used shadcn/ui defaults with one accent colour. The
-  brief says design work does not earn points, so I focused on loading, empty
-  and error states, form labels and keyboard/screen reader basics.
-- **Payment integration**, as explained above.
-- **Full-text search.** Title search uses `ILIKE '%...%'`, which cannot use an
-  index. With a lot of data this would need the `pg_trgm` extension, but with a
-  few campaigns it would be unnecessary work.
-- **CI.** I checked by hand that `pnpm test` passes on a clean checkout. A CI
-  workflow would be a single file, but it is not part of what is being
-  assessed.
-- **Browser tests.** The logic that can actually break is on the server, and
-  that is covered by integration tests against a real database. Playwright
-  tests would mostly be testing React.
-
----
+Real auth (a signed cookie, as the brief allows — the effort went into
+authorization instead: role-gated procedures, ownership inside every query, and
+tests that try another creator's ID directly). Custom design (shadcn defaults,
+one accent colour; effort went to states, labels and keyboard basics). Payment
+integration. `pg_trgm` for title search — `ILIKE '%…%'` cannot use an index, but
+the extension is unnecessary at this size. CI — I verified a clean checkout by
+hand. Browser tests — the logic that can break is server-side.
 
 ## Tests
 
-`pnpm test` runs 43 tests against a real Postgres database. I did not mock the
-database, because the most important test is about two transactions competing
-for the same row — and a mock cannot reproduce that.
-
-The five areas the brief asks for:
+`pnpm test` runs 45 tests against real Postgres. Mocking was never an option for
+the important one: a mock cannot reproduce a row lock.
 
 | Area | File |
 |---|---|
-| Payout math | `tests/unit/payout.test.ts` — 999 views → 0, 1000 → 1 payout, big numbers, invalid input |
-| Budget ceiling | `tests/integration/budget-ceiling.test.ts` — refusal with a typed error, everything rolled back, double approval blocked, auto-completion |
-| Concurrent approvals | `tests/integration/concurrent-approval.test.ts` — 2 requests with budget for 1, and 5 requests with budget for 3 |
-| Access control | `tests/integration/access-control.test.ts` — role checks, plus a creator trying another creator's submission ID |
-| Repeated ingest | `tests/integration/ingest.test.ts` — running twice changes nothing, views never drop, one failure does not stop the rest |
+| Payout math | `unit/payout.test.ts` — floor boundaries, large values, invalid input |
+| Budget ceiling | `integration/budget-ceiling.test.ts` — typed refusal, full rollback, double approval, auto-completion |
+| Concurrent approvals | `integration/concurrent-approval.test.ts` — 2 requests with budget for 1, 5 with budget for 3 |
+| Access control | `integration/access-control.test.ts` — role gates, plus another creator's ID |
+| Repeated ingest | `integration/ingest.test.ts` — rerun changes nothing, views never drop, one failure doesn't stop the rest |
 
-I also wrote two tests the brief does not ask for:
+Three tests the brief does not ask for: the `spent_cents` invariant (duplicated
+data needs proof), the daily chart over a period where most days have no metrics
+(the brief warns about this and it is easy to get wrong), and the budget-cut
+race described above. Ingest takes its fetcher as a parameter, so tests can hand
+it a source that shrinks or throws.
 
-- The **invariant test** described earlier, because `spent_cents` is duplicated
-  data and I wanted proof it stays correct.
-- A test for the **daily views chart**, where a campaign has metrics on only 2
-  days out of a 10-day period and the result still has 10 points. The brief
-  points out that the period will contain days with no metrics, and it would be
-  easy to get this wrong.
+## With another day
 
-For the ingest tests, the function that fetches view counts is passed in as a
-parameter. That let me write tests where the source returns fewer views than
-yesterday, or throws an error for one specific submission, and then check what
-actually ended up in the database.
+- **The two numbers on the overview.** "Approved views" is live, "locked at
+  approval" is frozen, and the card explains why. Honest, but it makes the
+  reader do the arithmetic. I would show the difference directly.
+- **The payout rate can change between submitting and approving.** Earnings use
+  the campaign's rate at approval time, so an admin can lower it on a campaign
+  with pending submissions. This follows the brief's formula, but a creator who
+  submitted at $4.00 per 1,000 views and got $2.00 would disagree. The fix is
+  to copy the rate onto the submission at creation — I did not, because it means
+  adding a second column to the submission table the brief specified.
+- **Two places where end-to-end typing stops.** Raw SQL results (`generate_series`,
+  `DISTINCT ON`) are cast to a hand-written shape, and `AppError.payload` is
+  cast on the client. Both are money-facing. A thin Zod parse and a union keyed
+  on `appCode` would close them.
+- **Ingest is an N+1.** Per-submission failure isolation means a query and an
+  insert each, in sequence. Fine here, wrong against a real API — that wants
+  batched fetches and a single `INSERT ... SELECT ... ON CONFLICT DO NOTHING`.
+- **The daily chart sums cumulative counts**, so a missing day dips the line
+  even though views never drop. The label says what it is; a true delta needs
+  `LAG(views) OVER (PARTITION BY submission_id ORDER BY captured_at)`.
 
----
+## Where I used AI and what I corrected
 
-## What I would fix with another day
+I used Claude Code throughout. I planned first — schema, concurrency approach,
+error codes, screens — then built to that plan and committed as I went. It was
+good at scaffolding tRPC and Drizzle, drafting a screen from a description, and
+applying a decision consistently across files.
 
-- **The two numbers on the campaign overview.** "Approved views" is live and
-  "locked at approval" is frozen, and the card explains why they are different.
-  It is honest but it makes the reader do the maths. I would show the
-  difference directly — something like "$40.00 of views since approval, not
-  payable" — so the confusing part becomes the useful part.
-- **Optimistic updates in the review queue.** Right now every approve waits for
-  the server. Since a budget refusal is a normal outcome and not a crash, I
-  could update the UI immediately and undo it if the server refuses. That would
-  make going through a long queue much faster.
-- **A limit on submissions per creator per campaign.** Nothing stops one
-  creator submitting fifty clips to the same campaign. The brief only forbids
-  the same URL twice so I did not invent a rule, but a real marketplace would
-  probably want one.
-- **Timestamps coming back as strings.** A few queries use raw SQL because
-  Drizzle's query builder does not cover them well (`generate_series`,
-  `DISTINCT ON`). Those return timestamps as strings, while normal Drizzle
-  queries return `Date` objects. Nothing depends on it right now and the types
-  are correct, but it is inconsistent and could confuse someone later.
+What I had to correct:
 
----
+- **The first ingest design was wrong.** `ON CONFLICT DO UPDATE SET views =
+  GREATEST(...)` looks right and would be right against a real API — but this
+  ingest *generates* the numbers, so a rerun produces a different value,
+  `GREATEST` keeps it, and the data changes: breaking the exact rule it was
+  meant to protect. Split into `DO NOTHING` for reruns and a clamp at
+  generation time for monotonicity.
+- **The concurrency approach changed after I pushed back.** The first
+  suggestion was `SELECT ... FOR UPDATE`; the conditional `UPDATE` takes the
+  same lock while doing the work. The ruled-out list came out of that argument.
+- **Extra features crept in twice** — a `markAsPaid` action and UI extras — and
+  I cut both. The brief is explicit that extra features earn nothing.
+- **Two bugs only using the app found.** Campaigns are created as `draft` but
+  the form had no status field, so a campaign could never go active from the UI
+  and every test still passed. And ingest synced only approved clips, keeping
+  estimated earnings at zero. Neither looked wrong in the code.
+- **Libraries had moved.** Generated components used Radix's `asChild` while
+  the current shadcn emits Base UI's `render`, and a generated
+  `--font-sans: var(--font-sans)` pointed at itself, dropping the whole app to a
+  serif fallback. Neither was a type error.
+- **A postgres.js detail**, found by a failing test: `Date` objects don't
+  serialize as parameters in a `::date` context.
+- **A test that passed until midnight.** The ingest suite pinned a fixed capture
+  day while fixtures seeded relative to today; they collided when the date
+  rolled over.
 
-## Where I used AI and what I had to fix
-
-I used Claude Code throughout. I planned first and wrote the plan down —
-the schema, the approach to concurrency, the error codes and the list of
-screens were decided before any code was written, and then I built it step by
-step and committed as I went.
-
-It was genuinely useful for setting up tRPC and Drizzle, writing a first
-version of a screen from a description, and applying a decision I had already
-made across several files consistently.
-
-Things I had to correct:
-
-- **The first ingest design was wrong.** The suggestion was
-  `ON CONFLICT DO UPDATE SET views = GREATEST(...)`, which looks correct and
-  would be correct with a real API. But my ingest *generates* the view numbers,
-  so running it twice on the same day would generate a different number,
-  `GREATEST` would keep the bigger one, and the data would change — breaking
-  the exact rule it was supposed to protect. I split it into
-  `ON CONFLICT DO NOTHING` for the "running twice changes nothing" rule, and a
-  `max()` when generating the number for the "views never go down" rule.
-- **The concurrency approach changed after I questioned it.** The first
-  suggestion was `SELECT ... FOR UPDATE`. It works, but the conditional
-  `UPDATE` takes the same lock while doing the actual work, so the extra query
-  is not needed. The list of rejected approaches above came out of that
-  discussion.
-- **Extra features crept in twice.** A `markAsPaid` action and some UI extras
-  got into the plan before I removed them. The brief says clearly that extra
-  features do not earn points.
-- **Two bugs that only appeared when I used the app myself.** Campaigns are
-  created as `draft`, but the form had no status field — so a campaign could
-  never be made active from the UI, and every test still passed. And ingest
-  only synced approved submissions, which kept estimated earnings at zero.
-  Neither of these looked wrong in the code.
-- **Libraries had changed.** The generated components used the Radix API
-  (`asChild`) but the current shadcn version uses Base UI (`render`). And a
-  generated CSS line, `--font-sans: var(--font-sans)`, pointed at itself, so
-  the font silently fell back to a serif across the whole app. Neither caused a
-  TypeScript error — I only found them by looking at the page.
-- **A postgres.js detail**, found by a failing test: `Date` objects cannot be
-  used as parameters where the SQL casts to `::date`. The query needs an ISO
-  date string instead.
-
-What I take from this: AI is fastest in the places where I can check the result
-quickly, and least reliable exactly where checking is hardest — concurrency,
-data correctness, and anything that depends on how a library behaves today
-rather than a year ago. That is where I put the tests.
+The pattern: AI is fastest where I can check the result quickly, and least
+reliable where checking is hardest — concurrency, data correctness, and library
+behaviour that changed recently. That is where the tests are.

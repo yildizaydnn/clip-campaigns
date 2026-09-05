@@ -1,8 +1,9 @@
-import { and, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, lte, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { campaigns } from "@/db/schema";
+import { AppError } from "@/lib/errors";
 import {
   createCampaignSchema,
   listCampaignsSchema,
@@ -11,6 +12,9 @@ import {
 import { calculateEarningsCents } from "@/server/services/payout";
 import { adminProcedure, creatorProcedure, router } from "../trpc";
 
+const escapeLikePattern = (value: string) =>
+  value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+
 export const campaignRouter = router({
   /** Server-side pagination, title search and status filter — per the brief. */
   list: adminProcedure
@@ -18,7 +22,11 @@ export const campaignRouter = router({
     .query(async ({ ctx, input }) => {
       const where = and(
         input.status ? eq(campaigns.status, input.status) : undefined,
-        input.search ? ilike(campaigns.title, `%${input.search}%`) : undefined,
+        // % and _ are ILIKE wildcards; a user typing them means the literal
+      // character, not "match anything"
+      input.search
+        ? ilike(campaigns.title, `%${escapeLikePattern(input.search)}%`)
+        : undefined,
       );
       const [items, counted] = await Promise.all([
         ctx.db
@@ -89,28 +97,41 @@ export const campaignRouter = router({
       return row!;
     }),
 
+  /**
+   * Lowering a budget below what approvals already locked in must fail. Same
+   * shape as the approval flow, and for the same reason: reading spent_cents
+   * and comparing it in application code leaves a gap where a concurrent
+   * approval can raise it between the read and the write. The condition goes
+   * into the UPDATE, so the row lock settles it; zero rows means it lost.
+   */
   update: adminProcedure
     .input(updateCampaignSchema)
     .mutation(async ({ ctx, input }) => {
+      const [row] = await ctx.db
+        .update(campaigns)
+        .set(input.data)
+        .where(
+          and(
+            eq(campaigns.id, input.id),
+            lte(campaigns.spentCents, input.data.totalBudgetCents),
+          ),
+        )
+        .returning();
+      if (row) return row;
+
+      // Zero rows: either no such campaign, or the new budget is below spend.
+      // Re-read to say which, instead of letting the check constraint answer.
       const [current] = await ctx.db
         .select({ spentCents: campaigns.spentCents })
         .from(campaigns)
         .where(eq(campaigns.id, input.id));
       if (!current) throw new TRPCError({ code: "NOT_FOUND" });
-      // don't let the DB check constraint be the messenger: a budget below
-      // what's already locked in is a user error with a readable answer
-      if (input.data.totalBudgetCents < current.spentCents)
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Budget can't go below what's already locked in (${current.spentCents} cents).`,
-        });
-      const [row] = await ctx.db
-        .update(campaigns)
-        .set(input.data)
-        .where(eq(campaigns.id, input.id))
-        .returning();
-      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
-      return row;
+      throw new AppError({
+        appCode: "BUDGET_BELOW_SPEND",
+        code: "BAD_REQUEST",
+        message: `Budget can't go below the ${current.spentCents} cents already locked in by approvals.`,
+        payload: { spentCents: current.spentCents },
+      });
     }),
 
   /**

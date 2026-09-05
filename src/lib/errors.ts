@@ -13,6 +13,7 @@ export const APP_ERROR_CODES = [
   "CAMPAIGN_NOT_IN_WINDOW",
   "PLATFORM_NOT_ALLOWED",
   "DUPLICATE_URL",
+  "BUDGET_BELOW_SPEND",
 ] as const;
 
 export type AppErrorCode = (typeof APP_ERROR_CODES)[number];

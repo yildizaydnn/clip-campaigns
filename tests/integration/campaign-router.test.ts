@@ -94,7 +94,7 @@ describe("campaign.update — budget guard", () => {
           endsAt: campaign.endsAt,
         },
       }),
-    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    ).rejects.toMatchObject({ appCode: "BUDGET_BELOW_SPEND" });
 
     // raising it is fine
     const updated = await caller.campaign.update({
@@ -110,5 +110,79 @@ describe("campaign.update — budget guard", () => {
       },
     });
     expect(updated.totalBudgetCents).toBe(20_000);
+  });
+});
+
+
+describe("campaign.list — search escaping", () => {
+  it("treats % and _ as literal characters, not wildcards", async () => {
+    const caller = await asAdmin();
+    await createCampaign({ title: "Summer 50% off" });
+    await createCampaign({ title: "Winter clearance" });
+
+    // a bare % would otherwise match everything
+    const pct = await caller.campaign.list({
+      page: 1,
+      pageSize: 10,
+      search: "50%",
+    });
+    expect(pct.items).toHaveLength(1);
+    expect(pct.items[0]!.title).toBe("Summer 50% off");
+
+    // "%" alone must match only the title that literally contains it,
+    // not every campaign the way an unescaped wildcard would
+    const literalPct = await caller.campaign.list({
+      page: 1,
+      pageSize: 10,
+      search: "%",
+    });
+    expect(literalPct.items).toHaveLength(1);
+    expect(literalPct.items[0]!.title).toBe("Summer 50% off");
+  });
+});
+
+describe("campaign.update — concurrency", () => {
+  it("a budget cut racing an approval cannot land below spend", async () => {
+    const caller = await asAdmin();
+    const creator = await createUser();
+    const campaign = await createCampaign({
+      payoutPer1kViewsCents: 100,
+      totalBudgetCents: 10_000,
+    });
+    const sub = await createSubmission({
+      campaignId: campaign.id,
+      creatorId: creator.id,
+    });
+    await addMetric(sub.id, 50_000); // locks 5_000 on approval
+
+    const { approveSubmission } = await import("@/server/services/approval");
+    const base = {
+      title: campaign.title,
+      status: campaign.status,
+      platforms: campaign.platforms,
+      payoutPer1kViewsCents: campaign.payoutPer1kViewsCents,
+      startsAt: campaign.startsAt,
+      endsAt: campaign.endsAt,
+    };
+
+    // Cutting the budget to 4_000 and approving 5_000 at the same moment:
+    // whichever wins, the campaign must never end up spending over budget.
+    const results = await Promise.allSettled([
+      approveSubmission(sub.id),
+      caller.campaign.update({
+        id: campaign.id,
+        data: { ...base, totalBudgetCents: 4_000 },
+      }),
+    ]);
+    expect(results.some((r) => r.status === "rejected")).toBe(true);
+
+    const { db } = await import("@/db");
+    const { campaigns } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [after] = await db
+      .select()
+      .from(campaigns)
+      .where(eq(campaigns.id, campaign.id));
+    expect(after!.spentCents).toBeLessThanOrEqual(after!.totalBudgetCents);
   });
 });
